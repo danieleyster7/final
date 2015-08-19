@@ -1,4 +1,3 @@
-//Programmer: Peter Han
 //use PB4 for passenger (right) DIR connection (protoboard B-62)
 //use PB5 for driver (left) DIR connection  (protoboard B-61)
 //use PA1 for passenger (right) sensor connection (protoboard A-48)
@@ -18,6 +17,8 @@ void init_PJ7(void);
 
 //global variables
 unsigned int count = 0;
+unsigned int counter = 0;
+unsigned char adjustMotor = 0;
 
 //#define Driver 0x01
 //#define Passenger 0x02       
@@ -45,25 +46,24 @@ const struct State {
 #define stop 0x00
 
 typedef const struct State StateType;
-//a
 /*
 	Inputs 		 : Result
 	0x00 (B,B,B) : STRAIGHT (shouldnt be possible, but technically straight) 
 	0x01 (B,B,W) : SL_DRIVER
 	0x02 (B,W,B) : invalid state, keep current state
 	0x03 (B,W,W) : HRD_DRIVER
-	0x04 (W,B,B) : SL_DRIVER
+	0x04 (W,B,B) : SL_PASS
 	0x05 (W,B,W) : STRAIGHT
 	0x06 (W,W,B) : HRD_PASS
 	0x07 (W,W,W) : STOP
 */
 StateType fsm[6] = { 
-	{regular,regular,{STRAIGHT,SL_DRIVER,STRAIGHT,HRD_DRIVER,SL_DRIVER,STRAIGHT,HRD_PASS,STOP}},    //Straight
-	{regular,slow,{S0,S1,S2,S3}},       //Slight passenger
-	{slow,regular,{S0,S1,S2,S3}},       //Slight driver
-	{stop,stop,{S0,S1,S2,S3}},          //Stop
-	{regular,stop,{}},					//Hard passenger
-	{stop,regular,{}}					//Hard driver
+	{regular,regular,{STRAIGHT,SL_DRIVER,STRAIGHT,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}},  //Straight
+	{regular,slow,{STRAIGHT,SL_DRIVER,SL_PASS,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}},      //Slight passenger
+	{slow,regular,{STRAIGHT,SL_DRIVER,SL_DRIVER,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}},    //Slight driver
+	{stop,stop,{STRAIGHT,SL_DRIVER,STOP,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}},          	//Stop
+	{regular,stop,{STRAIGHT,SL_DRIVER,HRD_PASS,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}},		//Hard passenger
+	{stop,regular,{STRAIGHT,SL_DRIVER,HRD_DRIVER,HRD_DRIVER,SL_PASS,STRAIGHT,HRD_PASS,STOP}}	//Hard driver
 };
 
 void main(void){
@@ -71,7 +71,7 @@ void main(void){
   StateType *Pt;                     //pointer to present state
   unsigned char sensor;             //sensor for the steering inputs
       
-  Pt = S0;                          //initialize the present state
+  Pt = STRAIGHT;                          //initialize the present state
   
   init_PWM( );
   init_Ports( );
@@ -81,15 +81,15 @@ void main(void){
   
   for(;;) 
   {
-    if(count <= 2) { 
+    if(adjustMotor == 1) { 
     
-      sensor = PORTA & 0x03;              //bit 1 (PA1) is for passenger, bit 0 (PA0) for driver
+      sensor = PORTA & 0x05;              
       
       Pt = Pt->Next[sensor];              //move to next state
 
       PWMDTY3 = Pt->PWMduty3 ;            //set duty cycle for driver motor
       PWMDTY1 = Pt->PWMduty1 ;          //set duty cycle for passenger motor
-      
+      adjustMotor == 0;
           
     }else PWME = 0x00;
    
@@ -128,6 +128,32 @@ void init_PJ7()
   PIFJ = 0x80;                  //clear the PORT J7 interrupt flag before enabling
   PIEJ = 0x80;                  //PORT J7 = 1; enable interrupt
 }
+
+void init_clock()
+{
+	CPMURTI = 0x17;	    // divide by 8*2^10, (8*2^10)/8Mhz = 1.024ms
+	CPMUFLG_RTIF = 1;   // clear RTIF before enable INT
+	CPMUINT_RTIE = 1;	// enable RTI
+}
+
+/******* Interrupt Service Routine ********/
+#pragma CODE_SEG NON_BANKED 
+interrupt ( ( (0x10000 - 0xFFF0) / 2 ) - 1 )  void isrRTI(void)
+{
+
+    counter++;
+	if (counter == 1000) {
+		adjustMotor = 1;
+		counter = 0;
+	}
+  //Clear flag
+  
+ CPMUFLG_RTIF = 1;          // clear RTIF
+  return;
+}
+
+#pragma CODE_SEG DEFAULT  
+
 
 /************* Interrupt Service Routine ************/
 #pragma CODE_SEG NON_BANKED
